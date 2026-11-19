@@ -1,1 +1,112 @@
+name: build-modlib
+# 用改过内核的 0.8.0 源码编译原生模组库（内核给 mod 提供函数，模组直接调用）
+# 用法：
+#   1. 仓库根放 kit.zip（我给的汉化+内核补丁包）
+#   2. 仓库根放 mods/ 目录，里面放 .hnmod 文件（可以多个）
+#   3. Actions 里手动运行本 workflow
+# 产物：artifact `native-lib`，内含 libhorizon_android.so + build.json
+on: [workflow_dispatch]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: checkout-own
+        uses: actions/checkout@v4
 
+      - name: prep
+        run: |
+          set -x
+          test -f kit.zip || (echo "MISSING kit.zip in repo root"; exit 1)
+          unzip -o kit.zip -d /tmp/kit
+          curl -L -o /tmp/src.tar.gz "https://github.com/starling-client/starling/archive/ac874422ed8f892505ff73d67ae486ecfee7a516.tar.gz"
+          tar xzf /tmp/src.tar.gz
+          mv starling-ac874422ed8f892505ff73d67ae486ecfee7a516 starling
+          cd starling
+          git init -q .
+          git config user.email "build@local"
+          git config user.name "build"
+          git apply --verbose /tmp/kit/汉化改动.patch || patch -p1 --forward < /tmp/kit/汉化改动.patch
+          cp /tmp/kit/CJK-Regular.ttf /tmp/kit/CJK-Medium.ttf /tmp/kit/CJK-Bold.ttf crates/horizon-theme/fonts/
+          sed -i 's/^codegen-units = 1$/codegen-units = 256/' Cargo.toml
+          git add -A
+          git commit -qm "kernel + zh"
+          echo "内核补丁已应用，提交：$(git rev-parse --short HEAD)"
+          echo "HORIZON_ANDROID_KEYSTORE=/tmp/kit/starling.keystore" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_KEY_ALIAS=starling" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_STORE_PASSWORD=starling123" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_KEY_PASSWORD=starling123" >> $GITHUB_ENV
+
+      - name: bundles
+        run: |
+          set -e
+          mkdir -p /tmp/bundles
+          if [ ! -d mods ]; then echo "没有 mods/ 目录，本次只编内核库"; fi
+          for f in mods/*.hnmod mods/*.hmod; do
+            [ -e "$f" ] || continue
+            name=$(basename "$f")
+            name=${name%.*}
+            rm -rf /tmp/unz && mkdir -p /tmp/unz
+            unzip -q -o "$f" -d /tmp/unz
+            id=$(python3 -c "import json;print(json.load(open('/tmp/unz/horizon-native.json'))['id'])")
+            mkdir -p "/tmp/bundles/$id"
+            cp -r /tmp/unz/mixins/"$id"/. "/tmp/bundles/$id/"
+            echo "装入模组：$id（来自 $name）"
+          done
+          ls -la /tmp/bundles || true
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: target
+        run: rustup target add aarch64-linux-android
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: starling
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - name: cargo-ndk
+        run: cargo install cargo-ndk --locked
+
+      - name: sdk
+        run: |
+          set -e
+          export ANDROID_HOME=$HOME/android-sdk
+          mkdir -p $ANDROID_HOME/cmdline-tools
+          curl -sSLo /tmp/cli.zip https://dl.google.com/android/repository/commandlinetools-linux-11076708_latest.zip
+          unzip -q /tmp/cli.zip -d $ANDROID_HOME/cmdline-tools
+          mv $ANDROID_HOME/cmdline-tools/cmdline-tools $ANDROID_HOME/cmdline-tools/latest
+          export PATH=$ANDROID_HOME/cmdline-tools/latest/bin:$PATH
+          export JAVA_HOME=${JAVA_HOME:-$(dirname $(dirname $(readlink -f $(which java))))}
+          yes | sdkmanager --licenses > /dev/null 2>&1 || true
+          sdkmanager "ndk;28.2.13676358" "build-tools;35.0.0" "platforms;android-36"
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+          echo "$ANDROID_HOME/cmdline-tools/latest/bin" >> $GITHUB_PATH
+
+      - name: build-native
+        run: |
+          set -x
+          java -version
+          echo "NDK=$ANDROID_NDK_HOME"
+          bundles=$(ls -d /tmp/bundles/* 2>/dev/null | tr '\n' ' ')
+          echo "bundles=$bundles"
+          bash starling/packaging/android/native_build.sh starling /tmp/out $bundles
+          ls -la /tmp/out
+          cat /tmp/out/build.json || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-lib
+          path: |
+            /tmp/out/libhorizon_android.so
+            /tmp/out/build.json
+            /tmp/out/*.apk
+          if-no-files-found: warn
+          retention-days: 30
