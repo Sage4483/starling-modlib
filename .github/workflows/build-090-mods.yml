@@ -1,6 +1,6 @@
 name: build-090-mods
 
-on: [workflow_dispatch, push]
+on: [workflow_dispatch]
 
 jobs:
   build:
