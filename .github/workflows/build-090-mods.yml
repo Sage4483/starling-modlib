@@ -26,6 +26,7 @@ jobs:
           git config user.name build
           ls -la /tmp/kit
           git apply --verbose /tmp/kit/汉化改动.patch || patch -p1 --forward < /tmp/kit/汉化改动.patch
+          git apply --verbose /tmp/kit/bots090.patch || patch -p1 --forward < /tmp/kit/bots090.patch
           cp /tmp/kit/CJK-Regular.ttf /tmp/kit/CJK-Medium.ttf /tmp/kit/CJK-Bold.ttf crates/horizon-theme/fonts/
           sed -i 's/^codegen-units = 1$/codegen-units = 256/' Cargo.toml
           echo "游戏内词条: $(python3 -c 'import json;print(len(json.load(open("crates/horizon-client/assets/horizon/lang/zh_cn.json"))))')"
