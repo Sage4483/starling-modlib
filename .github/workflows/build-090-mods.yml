@@ -1,0 +1,101 @@
+name: build-090-mods
+
+on: [workflow_dispatch, push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: prepare
+        run: |
+          set -x
+          ls -la
+          test -f kit090.zip || (echo "NO kit090.zip IN REPO ROOT"; exit 1)
+          rm -rf /tmp/kit && mkdir -p /tmp/kit
+          unzip -o kit090.zip -d /tmp/kit
+          curl -L -o /tmp/src.tar.gz "https://codeload.github.com/starling-client/starling/tar.gz/refs/tags/v0.9.0"
+          tar xzf /tmp/src.tar.gz
+          mv starling-0.9.0 starling
+          cd starling
+          git init -q .
+          git config user.email build@local
+          git config user.name build
+          ls -la /tmp/kit
+          git apply --verbose /tmp/kit/汉化改动.patch || patch -p1 --forward < /tmp/kit/汉化改动.patch
+          cp /tmp/kit/CJK-Regular.ttf /tmp/kit/CJK-Medium.ttf /tmp/kit/CJK-Bold.ttf crates/horizon-theme/fonts/
+          sed -i 's/^codegen-units = 1$/codegen-units = 256/' Cargo.toml
+          echo "游戏内词条: $(python3 -c 'import json;print(len(json.load(open("crates/horizon-client/assets/horizon/lang/zh_cn.json"))))')"
+          echo "界面汉化词条: $(python3 -c 'import json;print(len(json.load(open("crates/horizon-client/src/hanhua_zh.json"))))')"
+          git add -A
+          git commit -qm "kernel 0.9.0 and zh"
+          git rev-parse --short HEAD
+          echo "HORIZON_ANDROID_KEYSTORE=/tmp/kit/starling.keystore" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_KEY_ALIAS=starling" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_STORE_PASSWORD=starling123" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_KEY_PASSWORD=starling123" >> $GITHUB_ENV
+
+      - name: bundles
+        run: |
+          set -e
+          mkdir -p /tmp/bundles
+          for f in $(find mods -name '*.hnmod' -o -name '*.hmod'); do
+            case "$f" in
+              *schematic*) echo "skip $f (not updated for 0.9.0 yet)"; continue ;;
+            esac
+            echo "found $f"
+            rm -rf /tmp/unz && mkdir -p /tmp/unz
+            unzip -q -o "$f" -d /tmp/unz
+            id=$(python3 -c "import json;print(json.load(open('/tmp/unz/horizon-native.json'))['id'])")
+            mkdir -p "/tmp/bundles/$id"
+            cp -r "/tmp/unz/mixins/$id/." "/tmp/bundles/$id/"
+            echo "bundle $id ready"
+          done
+          ls -la /tmp/bundles
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: rust
+        working-directory: starling
+        run: |
+          chmod +x tools/ci/rustup_install.sh
+          bash tools/ci/rustup_install.sh --profile minimal --component rust-src --target aarch64-linux-android
+          cargo install cargo-ndk --version 3.5.4 --locked
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: starling
+
+      - name: sdk
+        run: |
+          set -e
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "build-tools;35.0.0" "platforms;android-36" "ndk;28.2.13676358" > /dev/null
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+
+      - name: build
+        run: |
+          set -x
+          java -version
+          rustc -V
+          bundles=$(ls -d /tmp/bundles/* 2>/dev/null | tr '\n' ' ')
+          echo "bundles=$bundles"
+          bash starling/packaging/android/native_build.sh starling /tmp/out $bundles
+          ls -la /tmp/out
+          cat /tmp/out/build.json || true
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: native-lib-090
+          path: |
+            /tmp/out/libhorizon_android.so
+            /tmp/out/build.json
+            /tmp/out/*.apk
+          if-no-files-found: error
+          retention-days: 30
