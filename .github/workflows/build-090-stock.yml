@@ -1,0 +1,74 @@
+name: build-090-stock-dev
+
+on: [workflow_dispatch]
+
+# The author's own 0.9.0, no patch of ours applied: built as the "dev" variant
+# (io.github.juanluci.starling.dev, label "Starling Dev", its own game folder), so it installs
+# beside the release and beside the modded build instead of replacing either.
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - name: checkout
+        uses: actions/checkout@v4
+
+      - name: prepare
+        run: |
+          set -x
+          curl -L -o /tmp/src.tar.gz "https://codeload.github.com/starling-client/starling/tar.gz/refs/tags/v0.9.0"
+          tar xzf /tmp/src.tar.gz
+          rm -rf starling && mv starling-0.9.0 starling
+          cd starling
+          git init -q .
+          git config user.email build@local
+          git config user.name build
+          sed -i 's/^codegen-units = 1$/codegen-units = 256/' Cargo.toml
+          git add -A
+          git commit -qm "0.9.0 stock, dev variant"
+          mkdir -p /tmp/kit
+          unzip -o ../kit090.zip starling.keystore -d /tmp/kit
+          echo "HORIZON_ANDROID_KEYSTORE=/tmp/kit/starling.keystore" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_KEY_ALIAS=starling" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_STORE_PASSWORD=starling123" >> $GITHUB_ENV
+          echo "HORIZON_ANDROID_KEY_PASSWORD=starling123" >> $GITHUB_ENV
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '25'
+
+      - name: rust
+        working-directory: starling
+        run: |
+          chmod +x tools/ci/rustup_install.sh
+          bash tools/ci/rustup_install.sh --profile minimal --component rust-src --target aarch64-linux-android
+          cargo install cargo-ndk --version 3.5.4 --locked
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: starling
+
+      - name: sdk
+        run: |
+          set -e
+          yes | $ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager --install "build-tools;35.0.0" "platforms;android-36" "ndk;28.2.13676358" > /dev/null
+          echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
+
+      - name: build
+        working-directory: starling
+        run: |
+          set -x
+          java -version
+          python3 packaging/android/build_apk.py --dev --profile fast --zip
+          ls -la target/android
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stock-dev-apk
+          path: |
+            starling/target/android/starling-dev-0.9.0-arm64-v8a.apk
+            starling/target/android/starling-dev-0.9.0-arm64-v8a.apk.zip
+          if-no-files-found: error
+          retention-days: 30
