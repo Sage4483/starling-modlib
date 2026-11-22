@@ -49,7 +49,7 @@ jobs:
           grep -q "00000000402b5328" crates/starling-account/src/lib.rs
           grep -q "oauth20_connect.srf" crates/starling-account/src/lib.rs
           grep -q "oauth20_token.srf" crates/starling-account/src/lib.rs
-          test -f crates/horizon-client/src/game/bots/player_bot.rs
+          test -f crates/horizon-client/src/game/bots/real_bots.rs
           test -f crates/horizon-client/src/game/starling/minihud_core.rs
           test -f crates/horizon-client/src/hanhua_zh.json
           echo "游戏内词条: $(python3 -c 'import json;print(len(json.load(open("crates/horizon-client/assets/horizon/lang/zh_cn.json"))))')"
