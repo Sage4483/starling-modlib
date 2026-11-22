@@ -1,6 +1,8 @@
 name: build-090-mods
 
+
 on: [workflow_dispatch]
+
 
 jobs:
   build:
@@ -10,13 +12,27 @@ jobs:
       - name: checkout
         uses: actions/checkout@v4
 
+      - name: swap
+        # The release build's 137 MB mod host needs the memory the official CI gives it.
+        run: |
+          set -e
+          where=/mnt
+          avail=$(df --output=avail -BG "$where" 2>/dev/null | tail -1 | tr -dc 0-9)
+          if [ "${avail:-0}" -lt 30 ]; then where=$RUNNER_TEMP; fi
+          sudo fallocate -l 10G "$where/release.swap"
+          sudo chmod 600 "$where/release.swap"
+          sudo mkswap "$where/release.swap" > /dev/null
+          sudo swapon "$where/release.swap"
+          free -h
+          echo "CARGO_BUILD_JOBS=3" >> "$GITHUB_ENV"
+
       - name: prepare
         run: |
           set -ex
           ls -la
-          test -f kit090.zip || (echo "NO kit090.zip IN REPO ROOT"; exit 1)
+          test -f kit090full.zip || (echo "NO kit090full.zip IN REPO ROOT"; exit 1)
           rm -rf /tmp/kit && mkdir -p /tmp/kit
-          unzip -o kit090.zip -d /tmp/kit
+          unzip -o kit090full.zip -d /tmp/kit
           ls -la /tmp/kit
           curl -L -o /tmp/src.tar.gz "https://codeload.github.com/starling-client/starling/tar.gz/refs/tags/v0.9.0"
           tar xzf /tmp/src.tar.gz
@@ -25,11 +41,17 @@ jobs:
           git init -q .
           git config user.email build@local
           git config user.name build
-          git apply --verbose -p2 /tmp/kit/all090.patch
+          git apply --verbose -p1 /tmp/kit/full090.patch
           cp /tmp/kit/CJK-Regular.ttf /tmp/kit/CJK-Medium.ttf /tmp/kit/CJK-Bold.ttf crates/horizon-theme/fonts/
           sed -i 's/^codegen-units = 1$/codegen-units = 256/' Cargo.toml
+          # Loud checks: the mods' hooks, the translation and the device-code sign-in must all be in.
           grep -q "fn set_mod_typing" crates/horizon-client/src/game/starling/native_compat.rs
           grep -q "00000000402b5328" crates/starling-account/src/lib.rs
+          grep -q "oauth20_connect.srf" crates/starling-account/src/lib.rs
+          grep -q "oauth20_token.srf" crates/starling-account/src/lib.rs
+          test -f crates/horizon-client/src/game/bots/player_bot.rs
+          test -f crates/horizon-client/src/game/starling/minihud_core.rs
+          test -f crates/horizon-client/src/hanhua_zh.json
           echo "游戏内词条: $(python3 -c 'import json;print(len(json.load(open("crates/horizon-client/assets/horizon/lang/zh_cn.json"))))')"
           echo "界面汉化词条: $(python3 -c 'import json;print(len(json.load(open("crates/horizon-client/src/hanhua_zh.json"))))')"
           git add -A
@@ -81,9 +103,27 @@ jobs:
           echo "ANDROID_HOME=$ANDROID_HOME" >> $GITHUB_ENV
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> $GITHUB_ENV
 
-      - name: build
+      - name: the game and the mod API as dylibs
+        # The official arm64 release keeps the game's crates as libraries of their own (the mod host
+        # and the mod API among them): that build is the one with every library in it, and the mods
+        # are compiled into those libraries rather than into a single merged one.
+        working-directory: starling
         run: |
-          set -x
+          set -e
+          python3 tools/android_native_sdk.py prepare
+          # prepare adds the mods' folder to the workspace, so the lockfile must be resolved again
+          # before `cargo fetch --locked` (native_build.sh) will take it.
+          cargo metadata --format-version 1 > /dev/null
+          git add -A
+          git -c user.name=build -c user.email=build@local commit -qm "android native sdk prepared"
+          git status --porcelain
+
+      - name: build
+        env:
+          RUSTFLAGS: -C prefer-dynamic
+          PROFILE: fast
+        run: |
+          set -ex
           java -version
           rustc -V
           bundles=$(ls -d /tmp/bundles/* 2>/dev/null | tr '\n' ' ')
@@ -91,13 +131,28 @@ jobs:
           bash starling/packaging/android/native_build.sh starling /tmp/out $bundles
           ls -la /tmp/out
           cat /tmp/out/build.json || true
+          python3 - <<'PY'
+          import glob, zipfile
+          apk = sorted(glob.glob('/tmp/out/starling-*.apk'))[-1]
+          names = [n for n in zipfile.ZipFile(apk).namelist() if n.startswith('lib/arm64-v8a/')]
+          print(apk, len(names), 'libraries')
+          for n in sorted(names):
+              print('  ', n)
+          # The official arm64 release's libraries: all of them must be here beside the mods.
+          want = ['libhorizon_mod_host.so', 'libmod_vocab.so', 'libmod_points.so',
+                  'libhorizon_engine_slots.so', 'libmod_api.so', 'libhorizon_core.so',
+                  'libhorizon_mod_runtime.so', 'libemutls.so', 'libc++_shared.so',
+                  'libhorizon_android.so']
+          missing = [w for w in want if f'lib/arm64-v8a/{w}' not in names]
+          if missing:
+              raise SystemExit(f'the APK is missing official libraries: {missing}')
+          PY
 
       - uses: actions/upload-artifact@v4
         with:
-          name: native-lib-090
+          name: apk-mods-090
           path: |
-            /tmp/out/libhorizon_android.so
-            /tmp/out/build.json
             /tmp/out/*.apk
+            /tmp/out/build.json
           if-no-files-found: error
           retention-days: 30
