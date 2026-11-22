@@ -95,6 +95,16 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: starling
+      - name: horizon-mixins
+        # native_build.sh installs this with whatever RUSTFLAGS the build step exports, and a
+        # `prefer-dynamic` one makes the tool itself miss libstd at run time: install it normally.
+        run: |
+          set -e
+          root="$HOME/.cache/starling-native/mixins-5a64af938ec8"
+          cargo install --locked --git https://github.com/horizon-rust/horizon-mixins \
+            --rev 5a64af938ec86b00d53d16a408aabc0038fb3e57 \
+            --root "$root" horizon-mixins-cli
+          "$root/bin/horizon-mixins" --help | head -3
 
       - name: sdk
         run: |
