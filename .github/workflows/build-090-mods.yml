@@ -42,6 +42,7 @@ jobs:
           git config user.email build@local
           git config user.name build
           git apply --verbose -p1 /tmp/kit/full090.patch
+          git apply --verbose -p1 /tmp/kit/schematic090.patch
           cp /tmp/kit/CJK-Regular.ttf /tmp/kit/CJK-Medium.ttf /tmp/kit/CJK-Bold.ttf crates/horizon-theme/fonts/
           sed -i 's/^codegen-units = 1$/codegen-units = 256/' Cargo.toml
           # Loud checks: the mods' hooks, the translation and the device-code sign-in must all be in.
@@ -50,6 +51,10 @@ jobs:
           grep -q "oauth20_connect.srf" crates/starling-account/src/lib.rs
           grep -q "oauth20_token.srf" crates/starling-account/src/lib.rs
           test -f crates/horizon-client/src/game/bots/real_bots.rs
+          test -f crates/horizon-client/src/game/starling/schematics_core.rs
+          test -f crates/horizon-client/src/game/starling/schematic_litematic.rs
+          grep -q "hnproj 2" crates/horizon-client/src/game/starling/schematics_core.rs
+          grep -q "schematic_ghost_geometry" crates/horizon-client/src/game/starling/schematics_core.rs
           test -f crates/horizon-client/src/game/starling/minihud_core.rs
           test -f crates/horizon-client/src/hanhua_zh.json
           echo "游戏内词条: $(python3 -c 'import json;print(len(json.load(open("crates/horizon-client/assets/horizon/lang/zh_cn.json"))))')"
@@ -67,9 +72,6 @@ jobs:
           set -e
           mkdir -p /tmp/bundles
           for f in $(find mods -name '*.hnmod' -o -name '*.hmod'); do
-            case "$f" in
-              *schematic*) echo "skip $f (not updated for 0.9.0 yet)"; continue ;;
-            esac
             echo "found $f"
             rm -rf /tmp/unz && mkdir -p /tmp/unz
             unzip -q -o "$f" -d /tmp/unz
@@ -156,6 +158,13 @@ jobs:
           missing = [w for w in want if f'lib/arm64-v8a/{w}' not in names]
           if missing:
               raise SystemExit(f'the APK is missing official libraries: {missing}')
+          import json
+          mods = json.load(open('/tmp/out/build.json'))['mods']
+          ids = sorted(m['id'] for m in mods)
+          print('mods in build.json:', ids)
+          for want in ('schematic', 'minihud', 'waymap', 'gamma', 'player_bot'):
+              if want not in ids:
+                  raise SystemExit(f'the build is missing mod {want}: {ids}')
           PY
 
       - uses: actions/upload-artifact@v4
