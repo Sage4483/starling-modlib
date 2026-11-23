@@ -1,7 +1,7 @@
 name: build-090-schematic
 
 
-on: [push, workflow_dispatch]
+on: [workflow_dispatch]
 
 
 jobs:
