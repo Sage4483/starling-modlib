@@ -55,6 +55,8 @@ jobs:
           test -f crates/horizon-client/src/game/starling/schematic_litematic.rs
           grep -q "hnproj 2" crates/horizon-client/src/game/starling/schematics_core.rs
           grep -q "schematic_ghost_geometry" crates/horizon-client/src/game/starling/schematics_core.rs
+          grep -q "fn completion_usages" crates/horizon-client/src/game/starling/schematics_core.rs
+          grep -q "schematics_core::completion_usages" crates/horizon-client/src/game/interface/chat.rs
           test -f crates/horizon-client/src/game/starling/minihud_core.rs
           test -f crates/horizon-client/src/hanhua_zh.json
           echo "游戏内词条: $(python3 -c 'import json;print(len(json.load(open("crates/horizon-client/assets/horizon/lang/zh_cn.json"))))')"
