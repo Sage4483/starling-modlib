@@ -106,7 +106,7 @@ jobs:
           set -e
           root="$HOME/.cache/starling-native/mixins-5a64af938ec8"
           mkdir -p "$root/bin"
-          # The pinned rev now needs credentials; the repo's horizon-mixins-bin is the same build.
+          # The pinned rev now wants credentials; horizon-mixins-bin in the repo root is the same build.
           if [ -x horizon-mixins-bin ]; then
             cp horizon-mixins-bin "$root/bin/horizon-mixins"
             chmod +x "$root/bin/horizon-mixins"
