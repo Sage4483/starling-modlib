@@ -105,9 +105,16 @@ jobs:
         run: |
           set -e
           root="$HOME/.cache/starling-native/mixins-5a64af938ec8"
-          cargo install --locked --git https://github.com/horizon-rust/horizon-mixins \
-            --rev 5a64af938ec86b00d53d16a408aabc0038fb3e57 \
-            --root "$root" horizon-mixins-cli
+          mkdir -p "$root/bin"
+          # The pinned rev now needs credentials; the repo's horizon-mixins-bin is the same build.
+          if [ -x horizon-mixins-bin ]; then
+            cp horizon-mixins-bin "$root/bin/horizon-mixins"
+            chmod +x "$root/bin/horizon-mixins"
+          else
+            cargo install --locked --git https://github.com/horizon-rust/horizon-mixins \
+              --rev 5a64af938ec86b00d53d16a408aabc0038fb3e57 \
+              --root "$root" horizon-mixins-cli
+          fi
           "$root/bin/horizon-mixins" --help | head -3
 
       - name: sdk
